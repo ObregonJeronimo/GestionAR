@@ -28,21 +28,32 @@ function getKey() {
 }
 
 /**
+ * Formatea fecha en formato ISO 8601 para ARCA (zona horaria Argentina UTC-3)
+ */
+function formatDateForArca(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+00:00`;
+}
+
+/**
  * Genera el TRA (Ticket de Requerimiento de Acceso) en XML
  */
 function generarTRA() {
   const now = new Date();
-  const generationTime = new Date(now.getTime() - 5 * 60 * 1000);
-  const expirationTime = new Date(now.getTime() + 12 * 60 * 60 * 1000);
-
-  const fmt = (d) => d.toISOString().replace(/\.\d{3}Z$/, '-03:00');
+  const generationTime = new Date(now.getTime() - 10 * 60 * 1000); // 10 min atrás
+  const expirationTime = new Date(now.getTime() + 10 * 60 * 60 * 1000); // 10 hs adelante
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <loginTicketRequest version="1.0">
   <header>
     <uniqueId>${Math.floor(Date.now() / 1000)}</uniqueId>
-    <generationTime>${fmt(generationTime)}</generationTime>
-    <expirationTime>${fmt(expirationTime)}</expirationTime>
+    <generationTime>${formatDateForArca(generationTime)}</generationTime>
+    <expirationTime>${formatDateForArca(expirationTime)}</expirationTime>
   </header>
   <service>${config.serviceName}</service>
 </loginTicketRequest>`;
@@ -90,6 +101,7 @@ export async function obtenerTicketAcceso() {
   console.log('[WSAA] Solicitando nuevo Ticket de Acceso...');
 
   const tra = generarTRA();
+  console.log('[WSAA] TRA generado:', tra);
   const cms = firmarTRA(tra);
 
   const client = await soap.createClientAsync(config.wsaa.wsdl);
@@ -103,7 +115,7 @@ export async function obtenerTicketAcceso() {
   ticketAcceso = { token, sign };
   ticketExpiration = new Date(expTime);
 
-  console.log(`[WSAA] ✅ Ticket obtenido. Expira: ${ticketExpiration.toLocaleString()}`);
+  console.log(`[WSAA] ✅ Ticket obtenido. Expira: ${ticketExpiration.toISOString()}`);
   return ticketAcceso;
 }
 
