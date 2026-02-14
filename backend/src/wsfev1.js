@@ -45,7 +45,6 @@ export async function solicitarCAE(factura) {
   const client = await getClient();
   const Auth = await getAuth();
 
-  // Determinar condición IVA del receptor
   let condIVA = factura.condicionIVAReceptor;
   if (condIVA === undefined || condIVA === null) {
     if (factura.cbteTipo === 1) condIVA = 1;
@@ -97,6 +96,85 @@ export async function solicitarCAE(factura) {
     },
   };
 
-  // Interceptar XML para inyectar CondicionIVAReceptor
-  // (la librería soap puede ignorar campos no definidos en el WSDL)
-  const condIVATag = `<CondicionIVAReceptor>${condIVA}</CondicionIVAReceptor>`;\n\n  function injectCondicionIVA(xml) {\n    // Insertar antes del cierre de </FECAEDetRequest>\n    return xml.replace('</FECAEDetRequest>', `${condIVATag}</FECAEDetRequest>`);\n  }\n\n  // Registrar interceptor una sola vez\n  const originalHttpRequest = client.httpClient.request;\n  let intercepted = false;\n  client.httpClient.request = function(rurl, data, callback, exheaders, exoptions) {\n    if (!intercepted && data && data.includes('FECAEDetRequest')) {\n      intercepted = true;\n      // Verificar si CondicionIVAReceptor ya está en el XML\n      if (!data.includes('CondicionIVAReceptor')) {\n        data = injectCondicionIVA(data);\n        console.log('[WSFEv1] Inyectado CondicionIVAReceptor:', condIVA);\n      }\n    }\n    return originalHttpRequest.call(this, rurl, data, callback, exheaders, exoptions);\n  };\n\n  try {\n    const [result] = await client.FECAESolicitarAsync(request);\n\n    // Restaurar httpClient original\n    client.httpClient.request = originalHttpRequest;\n\n    const res = result.FECAESolicitarResult;\n\n    if (res.Errors) {\n      const errores = [].concat(res.Errors.Err || []);\n      throw new Error(errores.map(e => `[${e.Code}] ${e.Msg}`).join('; '));\n    }\n\n    const det = res.FeDetResp.FECAEDetResponse[0] || res.FeDetResp.FECAEDetResponse;\n\n    if (det.Resultado === 'R') {\n      const obs = [].concat(det.Observaciones?.Obs || []);\n      throw new Error(`Rechazado: ${obs.map(o => `[${o.Code}] ${o.Msg}`).join('; ')}`);\n    }\n\n    return {\n      CAE: det.CAE,\n      CAEFchVto: det.CAEFchVto,\n      CbteDesde: det.CbteDesde,\n      CbteHasta: det.CbteHasta,\n      Resultado: det.Resultado,\n    };\n  } catch (error) {\n    // Restaurar httpClient en caso de error\n    client.httpClient.request = originalHttpRequest;\n    throw error;\n  }\n}\n\n// ── Consultar comprobante ─────────────────────────\n\nexport async function consultarComprobante(cbteTipo, ptoVta, cbteNro) {\n  const client = await getClient();\n  const Auth = await getAuth();\n  const [result] = await client.FECompConsultarAsync({\n    Auth,\n    FeCompConsReq: { CbteTipo: cbteTipo, CbteNro: cbteNro, PtoVta: ptoVta },\n  });\n  const res = result.FECompConsultarResult;\n  if (res.Errors) throw new Error(JSON.stringify(res.Errors));\n  return res.ResultGet;\n}\n\n// ── Parámetros ────────────────────────────────────\n\nexport async function getTiposCbte() {\n  const client = await getClient();\n  const Auth = await getAuth();\n  const [r] = await client.FEParamGetTiposCbteAsync({ Auth });\n  return r.FEParamGetTiposCbteResult.ResultGet.CbteTipo;\n}\n\nexport async function getTiposIva() {\n  const client = await getClient();\n  const Auth = await getAuth();\n  const [r] = await client.FEParamGetTiposIvaAsync({ Auth });\n  return r.FEParamGetTiposIvaResult.ResultGet.IvaTipo;\n}\n\nexport async function getPuntosVenta() {\n  const client = await getClient();\n  const Auth = await getAuth();\n  const [r] = await client.FEParamGetPtosVentaAsync({ Auth });\n  return r.FEParamGetPtosVentaResult?.ResultGet?.PtoVenta || [];\n}\n
+  const condIVATag = '<CondicionIVAReceptor>' + condIVA + '</CondicionIVAReceptor>';
+  const originalHttpRequest = client.httpClient.request;
+  let intercepted = false;
+
+  client.httpClient.request = function(rurl, data, callback, exheaders, exoptions) {
+    if (!intercepted && data && data.includes('FECAEDetRequest')) {
+      intercepted = true;
+      if (!data.includes('CondicionIVAReceptor')) {
+        data = data.replace('</FECAEDetRequest>', condIVATag + '</FECAEDetRequest>');
+        console.log('[WSFEv1] XML inyectado con CondicionIVAReceptor:', condIVA);
+      }
+    }
+    return originalHttpRequest.call(this, rurl, data, callback, exheaders, exoptions);
+  };
+
+  try {
+    const [result] = await client.FECAESolicitarAsync(request);
+    client.httpClient.request = originalHttpRequest;
+
+    const res = result.FECAESolicitarResult;
+
+    if (res.Errors) {
+      const errores = [].concat(res.Errors.Err || []);
+      throw new Error(errores.map(e => '[' + e.Code + '] ' + e.Msg).join('; '));
+    }
+
+    const det = res.FeDetResp.FECAEDetResponse[0] || res.FeDetResp.FECAEDetResponse;
+
+    if (det.Resultado === 'R') {
+      const obs = [].concat(det.Observaciones?.Obs || []);
+      throw new Error('Rechazado: ' + obs.map(o => '[' + o.Code + '] ' + o.Msg).join('; '));
+    }
+
+    return {
+      CAE: det.CAE,
+      CAEFchVto: det.CAEFchVto,
+      CbteDesde: det.CbteDesde,
+      CbteHasta: det.CbteHasta,
+      Resultado: det.Resultado,
+    };
+  } catch (error) {
+    client.httpClient.request = originalHttpRequest;
+    throw error;
+  }
+}
+
+// ── Consultar comprobante ─────────────────────────
+
+export async function consultarComprobante(cbteTipo, ptoVta, cbteNro) {
+  const client = await getClient();
+  const Auth = await getAuth();
+  const [result] = await client.FECompConsultarAsync({
+    Auth,
+    FeCompConsReq: { CbteTipo: cbteTipo, CbteNro: cbteNro, PtoVta: ptoVta },
+  });
+  const res = result.FECompConsultarResult;
+  if (res.Errors) throw new Error(JSON.stringify(res.Errors));
+  return res.ResultGet;
+}
+
+// ── Parámetros ────────────────────────────────────
+
+export async function getTiposCbte() {
+  const client = await getClient();
+  const Auth = await getAuth();
+  const [r] = await client.FEParamGetTiposCbteAsync({ Auth });
+  return r.FEParamGetTiposCbteResult.ResultGet.CbteTipo;
+}
+
+export async function getTiposIva() {
+  const client = await getClient();
+  const Auth = await getAuth();
+  const [r] = await client.FEParamGetTiposIvaAsync({ Auth });
+  return r.FEParamGetTiposIvaResult.ResultGet.IvaTipo;
+}
+
+export async function getPuntosVenta() {
+  const client = await getClient();
+  const Auth = await getAuth();
+  const [r] = await client.FEParamGetPtosVentaAsync({ Auth });
+  return r.FEParamGetPtosVentaResult?.ResultGet?.PtoVenta || [];
+}
