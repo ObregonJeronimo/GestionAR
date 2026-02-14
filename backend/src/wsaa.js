@@ -28,7 +28,7 @@ function getKey() {
 }
 
 /**
- * Formatea fecha en formato ISO 8601 para ARCA (zona horaria Argentina UTC-3)
+ * Formatea fecha en formato ISO 8601 UTC para ARCA
  */
 function formatDateForArca(date) {
   const year = date.getUTCFullYear();
@@ -45,8 +45,8 @@ function formatDateForArca(date) {
  */
 function generarTRA() {
   const now = new Date();
-  const generationTime = new Date(now.getTime() - 10 * 60 * 1000); // 10 min atrás
-  const expirationTime = new Date(now.getTime() + 10 * 60 * 60 * 1000); // 10 hs adelante
+  const generationTime = new Date(now.getTime() - 10 * 60 * 1000);
+  const expirationTime = new Date(now.getTime() + 10 * 60 * 60 * 1000);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <loginTicketRequest version="1.0">
@@ -89,7 +89,7 @@ function firmarTRA(traXml) {
 }
 
 /**
- * Obtiene un Ticket de Acceso del WSAA (con cache de 12hs)
+ * Obtiene un Ticket de Acceso del WSAA (con cache y manejo de alreadyAuthenticated)
  * @returns {{ token: string, sign: string }}
  */
 export async function obtenerTicketAcceso() {
@@ -101,22 +101,49 @@ export async function obtenerTicketAcceso() {
   console.log('[WSAA] Solicitando nuevo Ticket de Acceso...');
 
   const tra = generarTRA();
-  console.log('[WSAA] TRA generado:', tra);
   const cms = firmarTRA(tra);
 
-  const client = await soap.createClientAsync(config.wsaa.wsdl);
-  const [result] = await client.loginCmsAsync({ in0: cms });
+  try {
+    const client = await soap.createClientAsync(config.wsaa.wsdl);
+    const [result] = await client.loginCmsAsync({ in0: cms });
 
-  const parsed = await parseStringPromise(result.loginCmsReturn);
-  const token = parsed.loginTicketResponse.credentials[0].token[0];
-  const sign = parsed.loginTicketResponse.credentials[0].sign[0];
-  const expTime = parsed.loginTicketResponse.header[0].expirationTime[0];
+    const parsed = await parseStringPromise(result.loginCmsReturn);
+    const token = parsed.loginTicketResponse.credentials[0].token[0];
+    const sign = parsed.loginTicketResponse.credentials[0].sign[0];
+    const expTime = parsed.loginTicketResponse.header[0].expirationTime[0];
 
-  ticketAcceso = { token, sign };
-  ticketExpiration = new Date(expTime);
+    ticketAcceso = { token, sign };
+    ticketExpiration = new Date(expTime);
 
-  console.log(`[WSAA] ✅ Ticket obtenido. Expira: ${ticketExpiration.toISOString()}`);
-  return ticketAcceso;
+    console.log(`[WSAA] ✅ Ticket obtenido. Expira: ${ticketExpiration.toISOString()}`);
+    return ticketAcceso;
+  } catch (error) {
+    const errorMsg = error.message || '';
+
+    // Si ARCA dice "alreadyAuthenticated", esperar y reintentar
+    if (errorMsg.includes('alreadyAuthenticated')) {
+      console.log('[WSAA] ⏳ Ya autenticado, esperando 30 segundos para reintentar...');
+      await new Promise(resolve => setTimeout(resolve, 30000));
+
+      const client = await soap.createClientAsync(config.wsaa.wsdl);
+      const newTra = generarTRA();
+      const newCms = firmarTRA(newTra);
+      const [result] = await client.loginCmsAsync({ in0: newCms });
+
+      const parsed = await parseStringPromise(result.loginCmsReturn);
+      const token = parsed.loginTicketResponse.credentials[0].token[0];
+      const sign = parsed.loginTicketResponse.credentials[0].sign[0];
+      const expTime = parsed.loginTicketResponse.header[0].expirationTime[0];
+
+      ticketAcceso = { token, sign };
+      ticketExpiration = new Date(expTime);
+
+      console.log(`[WSAA] ✅ Ticket obtenido (reintento). Expira: ${ticketExpiration.toISOString()}`);
+      return ticketAcceso;
+    }
+
+    throw error;
+  }
 }
 
 export function invalidarTicket() {
