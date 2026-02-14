@@ -13,26 +13,6 @@ async function getClient() {
       disableCache: true,
     });
     soapClient.setEndpoint(config.wsfev1.url);
-
-    // Dump all field names in FECAEDetRequest from WSDL
-    try {
-      var desc = soapClient.describe();
-      var methods = desc.ServiceSoap || desc.ServiceSoap12 || Object.values(desc)[0];
-      var feCAESolicitar = methods.FECAESolicitar || methods.ServiceSoap && methods.ServiceSoap.FECAESolicitar;
-      console.log('[WSFEv1] describe() keys:', JSON.stringify(Object.keys(desc)));
-      // Try to find FECAEDetRequest fields
-      var descStr = JSON.stringify(desc);
-      // Search for any field containing "ondicion" or "CanMis"
-      var matches = descStr.match(/"[^"]*[Oo]ndicion[^"]*"/g);
-      console.log('[WSFEv1] Fields matching ondicion:', JSON.stringify(matches));
-      var matches2 = descStr.match(/"[^"]*CanMis[^"]*"/g);
-      console.log('[WSFEv1] Fields matching CanMis:', JSON.stringify(matches2));
-      // Also search for "Receptor"
-      var matches3 = descStr.match(/"[^"]*[Rr]eceptor[^"]*"/g);
-      console.log('[WSFEv1] Fields matching Receptor:', JSON.stringify(matches3));
-    } catch(e) {
-      console.log('[WSFEv1] Error inspecting WSDL:', e.message);
-    }
   }
   return soapClient;
 }
@@ -80,7 +60,7 @@ export async function solicitarCAE(factura) {
     DocTipo: factura.docTipo,
     DocNro: factura.docNro,
     CanMisMonExt: 'N',
-    CondicionIvaReceptorId: condIVA,
+    CondicionIVAReceptorId: condIVA,
     CbteDesde: factura.cbteDesde,
     CbteHasta: factura.cbteHasta,
     CbteFch: factura.cbteFch,
@@ -120,64 +100,30 @@ export async function solicitarCAE(factura) {
     },
   };
 
-  // Interceptar para verificar el XML final
-  const originalHttpRequest = client.httpClient.request;
-  let intercepted = false;
+  console.log('[WSFEv1] Emitiendo factura tipo', factura.cbteTipo, 'con CondicionIVAReceptorId:', condIVA);
 
-  client.httpClient.request = function(rurl, data, callback, exheaders, exoptions) {
-    if (!intercepted && data && data.includes('FECAEDetRequest')) {
-      intercepted = true;
-      // Si CondicionIvaReceptorId no esta, inyectar despues de CanMisMonExt o DocNro
-      if (!data.includes('CondicionIvaReceptorId')) {
-        var condTag = '<CondicionIvaReceptorId>' + condIVA + '</CondicionIvaReceptorId>';
-        if (data.includes('</CanMisMonExt>')) {
-          data = data.replace('</CanMisMonExt>', '</CanMisMonExt>' + condTag);
-        } else {
-          data = data.replace('</DocNro>', '</DocNro>' + condTag);
-        }
-        console.log('[WSFEv1] Inyectado manualmente despues de CanMisMonExt/DocNro');
-      } else {
-        console.log('[WSFEv1] CondicionIvaReceptorId ya presente en XML');
-      }
-      // Log XML detalle
-      var start = data.indexOf('<FECAEDetRequest>');
-      var end = data.indexOf('</FECAEDetRequest>') + 18;
-      if (start !== -1 && end > start) {
-        console.log('[WSFEv1] FINAL XML:', data.substring(start, end));
-      }
-    }
-    return originalHttpRequest.call(this, rurl, data, callback, exheaders, exoptions);
-  };
+  const [result] = await client.FECAESolicitarAsync(request);
+  const res = result.FECAESolicitarResult;
 
-  try {
-    const [result] = await client.FECAESolicitarAsync(request);
-    client.httpClient.request = originalHttpRequest;
-
-    const res = result.FECAESolicitarResult;
-
-    if (res.Errors) {
-      const errores = [].concat(res.Errors.Err || []);
-      throw new Error(errores.map(e => '[' + e.Code + '] ' + e.Msg).join('; '));
-    }
-
-    const det = res.FeDetResp.FECAEDetResponse[0] || res.FeDetResp.FECAEDetResponse;
-
-    if (det.Resultado === 'R') {
-      const obs = [].concat(det.Observaciones?.Obs || []);
-      throw new Error('Rechazado: ' + obs.map(o => '[' + o.Code + '] ' + o.Msg).join('; '));
-    }
-
-    return {
-      CAE: det.CAE,
-      CAEFchVto: det.CAEFchVto,
-      CbteDesde: det.CbteDesde,
-      CbteHasta: det.CbteHasta,
-      Resultado: det.Resultado,
-    };
-  } catch (error) {
-    client.httpClient.request = originalHttpRequest;
-    throw error;
+  if (res.Errors) {
+    const errores = [].concat(res.Errors.Err || []);
+    throw new Error(errores.map(e => '[' + e.Code + '] ' + e.Msg).join('; '));
   }
+
+  const det = res.FeDetResp.FECAEDetResponse[0] || res.FeDetResp.FECAEDetResponse;
+
+  if (det.Resultado === 'R') {
+    const obs = [].concat(det.Observaciones?.Obs || []);
+    throw new Error('Rechazado: ' + obs.map(o => '[' + o.Code + '] ' + o.Msg).join('; '));
+  }
+
+  return {
+    CAE: det.CAE,
+    CAEFchVto: det.CAEFchVto,
+    CbteDesde: det.CbteDesde,
+    CbteHasta: det.CbteHasta,
+    Resultado: det.Resultado,
+  };
 }
 
 // ── Consultar comprobante ─────────────────────────
