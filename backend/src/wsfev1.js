@@ -97,8 +97,6 @@ export async function solicitarCAE(factura) {
   };
 
   // Interceptar XML SOAP para inyectar CondicionIvaReceptorId
-  // Nombre correcto del campo segun WSDL actualizado de ARCA (RG 5616)
-  // Va ANTES de CbteDesde segun el orden del XML oficial
   const condTag = '<CondicionIvaReceptorId>' + condIVA + '</CondicionIvaReceptorId>';
   const originalHttpRequest = client.httpClient.request;
   let intercepted = false;
@@ -107,13 +105,15 @@ export async function solicitarCAE(factura) {
     if (!intercepted && data && data.includes('FECAEDetRequest')) {
       intercepted = true;
       if (!data.includes('CondicionIvaReceptorId')) {
-        // Insertar antes de <CbteDesde> para respetar orden del WSDL
-        if (data.includes('<CbteDesde>')) {
-          data = data.replace('<CbteDesde>', condTag + '<CbteDesde>');
-        } else {
-          data = data.replace('</FECAEDetRequest>', condTag + '</FECAEDetRequest>');
-        }
+        // Insertar despues de DocNro segun orden oficial del XML de ARCA
+        data = data.replace(/<\/DocNro>/, '</DocNro>' + condTag);
         console.log('[WSFEv1] Inyectado CondicionIvaReceptorId:', condIVA);
+        // Log del XML del detalle para debug
+        var start = data.indexOf('<FECAEDetRequest>');
+        var end = data.indexOf('</FECAEDetRequest>') + 18;
+        if (start !== -1 && end !== -1) {
+          console.log('[WSFEv1] XML FECAEDetRequest:', data.substring(start, end));
+        }
       }
     }
     return originalHttpRequest.call(this, rurl, data, callback, exheaders, exoptions);
