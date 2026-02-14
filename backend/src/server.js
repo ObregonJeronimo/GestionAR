@@ -9,7 +9,22 @@ import * as wsfev1 from './wsfev1.js';
 
 const app = express();
 
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }));
+// CORS: aceptar frontend de Vercel y localhost
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:4173',
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
+      callback(null, true);
+    } else {
+      callback(null, true); // permisivo en desarrollo
+    }
+  },
+}));
 app.use(express.json());
 
 // ── Health ────────────────────────────────────────
