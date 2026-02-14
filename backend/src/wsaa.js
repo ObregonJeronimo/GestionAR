@@ -12,6 +12,22 @@ let ticketAcceso = null;
 let ticketExpiration = null;
 
 /**
+ * Obtiene el contenido del certificado (desde env o archivo)
+ */
+function getCert() {
+  if (config.certContent) return config.certContent.replace(/\\n/g, '\n');
+  return fs.readFileSync(config.certPath, 'utf8');
+}
+
+/**
+ * Obtiene el contenido de la clave privada (desde env o archivo)
+ */
+function getKey() {
+  if (config.keyContent) return config.keyContent.replace(/\\n/g, '\n');
+  return fs.readFileSync(config.keyPath, 'utf8');
+}
+
+/**
  * Genera el TRA (Ticket de Requerimiento de Acceso) en XML
  */
 function generarTRA() {
@@ -36,8 +52,8 @@ function generarTRA() {
  * Firma el TRA con certificado y clave privada usando PKCS#7/CMS
  */
 function firmarTRA(traXml) {
-  const certPem = fs.readFileSync(config.certPath, 'utf8');
-  const keyPem = fs.readFileSync(config.keyPath, 'utf8');
+  const certPem = getCert();
+  const keyPem = getKey();
 
   const cert = forge.pki.certificateFromPem(certPem);
   const key = forge.pki.privateKeyFromPem(keyPem);
