@@ -71,7 +71,6 @@ export async function solicitarCAE(factura) {
     MonCotiz: factura.monCotiz || 1,
   };
 
-  // IVA
   if (factura.iva && factura.iva.length > 0) {
     detalle.Iva = { AlicIva: factura.iva.map(i => ({ Id: i.Id, BaseImp: i.BaseImp, Importe: i.Importe })) };
   }
@@ -98,96 +97,6 @@ export async function solicitarCAE(factura) {
     },
   };
 
-  // Interceptar el XML para inyectar CondicionIVAReceptor manualmente
-  // La librería soap puede no reconocer este campo nuevo del WSDL
-  client.on('request', function onRequest(xml) {
-    client.removeListener('request', onRequest);
-    console.log('[WSFEv1] XML enviado (primeros 2000 chars):', xml.substring(0, 2000));
-  });
-
-  // Agregar CondicionIVAReceptor via wsdlOptions o override del XML
-  // Usamos _client para modificar el mensaje SOAP directamente
-  client.addSoapHeader('');
-  
-  // Override: construir el XML del detalle manualmente incluyendo CondicionIVAReceptor
-  const xmlOverride = buildDetailXml(detalle, condIVA);
-  
-  console.log('[WSFEv1] Probando con XML override para CondicionIVAReceptor:', condIVA);
-
-  const [result] = await client.FECAESolicitarAsync({
-    Auth,
-    FeCAEReq: {
-      FeCabReq: { CantReg: 1, PtoVta: factura.ptoVta, CbteTipo: factura.cbteTipo },
-      FeDetReq: { 
-        FECAEDetRequest: {
-          ...detalle,
-          CondicionIVAReceptor: condIVA,
-        }
-      },
-    },
-  });
-  
-  const res = result.FECAESolicitarResult;
-
-  if (res.Errors) {
-    const errores = [].concat(res.Errors.Err || []);
-    throw new Error(errores.map(e => `[${e.Code}] ${e.Msg}`).join('; '));
-  }
-
-  const det2 = res.FeDetResp.FECAEDetResponse[0] || res.FeDetResp.FECAEDetResponse;
-
-  if (det2.Resultado === 'R') {
-    const obs = [].concat(det2.Observaciones?.Obs || []);
-    throw new Error(`Rechazado: ${obs.map(o => `[${o.Code}] ${o.Msg}`).join('; ')}`);
-  }
-
-  return {
-    CAE: det2.CAE,
-    CAEFchVto: det2.CAEFchVto,
-    CbteDesde: det2.CbteDesde,
-    CbteHasta: det2.CbteHasta,
-    Resultado: det2.Resultado,
-  };
-}
-
-function buildDetailXml() {
-  // placeholder - no used directly
-  return '';
-}
-
-// ── Consultar comprobante ─────────────────────────
-
-export async function consultarComprobante(cbteTipo, ptoVta, cbteNro) {
-  const client = await getClient();
-  const Auth = await getAuth();
-  const [result] = await client.FECompConsultarAsync({
-    Auth,
-    FeCompConsReq: { CbteTipo: cbteTipo, CbteNro: cbteNro, PtoVta: ptoVta },
-  });
-  const res = result.FECompConsultarResult;
-  if (res.Errors) throw new Error(JSON.stringify(res.Errors));
-  return res.ResultGet;
-}
-
-// ── Parámetros ────────────────────────────────────
-
-export async function getTiposCbte() {
-  const client = await getClient();
-  const Auth = await getAuth();
-  const [r] = await client.FEParamGetTiposCbteAsync({ Auth });
-  return r.FEParamGetTiposCbteResult.ResultGet.CbteTipo;
-}
-
-export async function getTiposIva() {
-  const client = await getClient();
-  const Auth = await getAuth();
-  const [r] = await client.FEParamGetTiposIvaAsync({ Auth });
-  return r.FEParamGetTiposIvaResult.ResultGet.IvaTipo;
-}
-
-export async function getPuntosVenta() {
-  const client = await getClient();
-  const Auth = await getAuth();
-  const [r] = await client.FEParamGetPtosVentaAsync({ Auth });
-  return r.FEParamGetPtosVentaResult?.ResultGet?.PtoVenta || [];
-}
+  // Interceptar XML para inyectar CondicionIVAReceptor
+  // (la librería soap puede ignorar campos no definidos en el WSDL)
+  const condIVATag = `<CondicionIVAReceptor>${condIVA}</CondicionIVAReceptor>`;\n\n  function injectCondicionIVA(xml) {\n    // Insertar antes del cierre de </FECAEDetRequest>\n    return xml.replace('</FECAEDetRequest>', `${condIVATag}</FECAEDetRequest>`);\n  }\n\n  // Registrar interceptor una sola vez\n  const originalHttpRequest = client.httpClient.request;\n  let intercepted = false;\n  client.httpClient.request = function(rurl, data, callback, exheaders, exoptions) {\n    if (!intercepted && data && data.includes('FECAEDetRequest')) {\n      intercepted = true;\n      // Verificar si CondicionIVAReceptor ya está en el XML\n      if (!data.includes('CondicionIVAReceptor')) {\n        data = injectCondicionIVA(data);\n        console.log('[WSFEv1] Inyectado CondicionIVAReceptor:', condIVA);\n      }\n    }\n    return originalHttpRequest.call(this, rurl, data, callback, exheaders, exoptions);\n  };\n\n  try {\n    const [result] = await client.FECAESolicitarAsync(request);\n\n    // Restaurar httpClient original\n    client.httpClient.request = originalHttpRequest;\n\n    const res = result.FECAESolicitarResult;\n\n    if (res.Errors) {\n      const errores = [].concat(res.Errors.Err || []);\n      throw new Error(errores.map(e => `[${e.Code}] ${e.Msg}`).join('; '));\n    }\n\n    const det = res.FeDetResp.FECAEDetResponse[0] || res.FeDetResp.FECAEDetResponse;\n\n    if (det.Resultado === 'R') {\n      const obs = [].concat(det.Observaciones?.Obs || []);\n      throw new Error(`Rechazado: ${obs.map(o => `[${o.Code}] ${o.Msg}`).join('; ')}`);\n    }\n\n    return {\n      CAE: det.CAE,\n      CAEFchVto: det.CAEFchVto,\n      CbteDesde: det.CbteDesde,\n      CbteHasta: det.CbteHasta,\n      Resultado: det.Resultado,\n    };\n  } catch (error) {\n    // Restaurar httpClient en caso de error\n    client.httpClient.request = originalHttpRequest;\n    throw error;\n  }\n}\n\n// ── Consultar comprobante ─────────────────────────\n\nexport async function consultarComprobante(cbteTipo, ptoVta, cbteNro) {\n  const client = await getClient();\n  const Auth = await getAuth();\n  const [result] = await client.FECompConsultarAsync({\n    Auth,\n    FeCompConsReq: { CbteTipo: cbteTipo, CbteNro: cbteNro, PtoVta: ptoVta },\n  });\n  const res = result.FECompConsultarResult;\n  if (res.Errors) throw new Error(JSON.stringify(res.Errors));\n  return res.ResultGet;\n}\n\n// ── Parámetros ────────────────────────────────────\n\nexport async function getTiposCbte() {\n  const client = await getClient();\n  const Auth = await getAuth();\n  const [r] = await client.FEParamGetTiposCbteAsync({ Auth });\n  return r.FEParamGetTiposCbteResult.ResultGet.CbteTipo;\n}\n\nexport async function getTiposIva() {\n  const client = await getClient();\n  const Auth = await getAuth();\n  const [r] = await client.FEParamGetTiposIvaAsync({ Auth });\n  return r.FEParamGetTiposIvaResult.ResultGet.IvaTipo;\n}\n\nexport async function getPuntosVenta() {\n  const client = await getClient();\n  const Auth = await getAuth();\n  const [r] = await client.FEParamGetPtosVentaAsync({ Auth });\n  return r.FEParamGetPtosVentaResult?.ResultGet?.PtoVenta || [];\n}\n
