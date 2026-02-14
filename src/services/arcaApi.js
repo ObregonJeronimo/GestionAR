@@ -1,7 +1,7 @@
 // src/services/arcaApi.js
 // Cliente para conectar el frontend React con el backend ARCA
 
-const API_BASE = import.meta.env.VITE_ARCA_API_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_ARCA_API_URL || 'https://gestionar-production.up.railway.app';
 
 async function request(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
