@@ -1,5 +1,6 @@
 // backend/src/config.js
 // Configuración ARCA (ex AFIP) Web Services
+// Soporta certificados desde archivos (local) o variables de entorno (Railway/deploy)
 
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,9 +15,11 @@ export default {
   env: isProduction ? 'production' : 'homologacion',
   cuit: process.env.ARCA_CUIT || '20XXXXXXXXX',
 
-  // Certificados
+  // Certificados: primero intenta variables de entorno, sino archivos locales
   certPath: path.join(__dirname, '..', 'certs', 'MiCertificado.pem'),
   keyPath:  path.join(__dirname, '..', 'certs', 'MiClavePrivada.key'),
+  certContent: process.env.ARCA_CERT || null,
+  keyContent:  process.env.ARCA_KEY || null,
 
   // URLs WSAA (Autenticación)
   wsaa: {
