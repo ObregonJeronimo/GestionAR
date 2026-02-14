@@ -9,17 +9,30 @@ let soapClient = null;
 
 async function getClient() {
   if (!soapClient) {
-    // Forzar que no cachee el WSDL y use la version mas reciente
     soapClient = await soap.createClientAsync(config.wsfev1.wsdl, {
       disableCache: true,
-      forceSoap12Headers: false,
     });
     soapClient.setEndpoint(config.wsfev1.url);
 
-    // Verificar si el WSDL tiene el campo CondicionIvaReceptorId
-    var wsdlXml = JSON.stringify(soapClient.describe());
-    console.log('[WSFEv1] WSDL tiene CondicionIvaReceptorId:', wsdlXml.includes('CondicionIvaReceptorId'));
-    console.log('[WSFEv1] WSDL tiene CanMisMonExt:', wsdlXml.includes('CanMisMonExt'));
+    // Dump all field names in FECAEDetRequest from WSDL
+    try {
+      var desc = soapClient.describe();
+      var methods = desc.ServiceSoap || desc.ServiceSoap12 || Object.values(desc)[0];
+      var feCAESolicitar = methods.FECAESolicitar || methods.ServiceSoap && methods.ServiceSoap.FECAESolicitar;
+      console.log('[WSFEv1] describe() keys:', JSON.stringify(Object.keys(desc)));
+      // Try to find FECAEDetRequest fields
+      var descStr = JSON.stringify(desc);
+      // Search for any field containing "ondicion" or "CanMis"
+      var matches = descStr.match(/"[^"]*[Oo]ndicion[^"]*"/g);
+      console.log('[WSFEv1] Fields matching ondicion:', JSON.stringify(matches));
+      var matches2 = descStr.match(/"[^"]*CanMis[^"]*"/g);
+      console.log('[WSFEv1] Fields matching CanMis:', JSON.stringify(matches2));
+      // Also search for "Receptor"
+      var matches3 = descStr.match(/"[^"]*[Rr]eceptor[^"]*"/g);
+      console.log('[WSFEv1] Fields matching Receptor:', JSON.stringify(matches3));
+    } catch(e) {
+      console.log('[WSFEv1] Error inspecting WSDL:', e.message);
+    }
   }
   return soapClient;
 }
@@ -66,6 +79,7 @@ export async function solicitarCAE(factura) {
     Concepto: factura.concepto,
     DocTipo: factura.docTipo,
     DocNro: factura.docNro,
+    CanMisMonExt: 'N',
     CondicionIvaReceptorId: condIVA,
     CbteDesde: factura.cbteDesde,
     CbteHasta: factura.cbteHasta,
@@ -106,27 +120,30 @@ export async function solicitarCAE(factura) {
     },
   };
 
-  // Interceptar para asegurar que CondicionIvaReceptorId esta en el XML
+  // Interceptar para verificar el XML final
   const originalHttpRequest = client.httpClient.request;
   let intercepted = false;
 
   client.httpClient.request = function(rurl, data, callback, exheaders, exoptions) {
     if (!intercepted && data && data.includes('FECAEDetRequest')) {
       intercepted = true;
-      // Si la libreria soap filtro el campo, inyectarlo manualmente
+      // Si CondicionIvaReceptorId no esta, inyectar despues de CanMisMonExt o DocNro
       if (!data.includes('CondicionIvaReceptorId')) {
         var condTag = '<CondicionIvaReceptorId>' + condIVA + '</CondicionIvaReceptorId>';
-        data = data.replace('</DocNro>', '</DocNro>' + condTag);
-        console.log('[WSFEv1] Campo NO estaba en WSDL, inyectado manualmente');
+        if (data.includes('</CanMisMonExt>')) {
+          data = data.replace('</CanMisMonExt>', '</CanMisMonExt>' + condTag);
+        } else {
+          data = data.replace('</DocNro>', '</DocNro>' + condTag);
+        }
+        console.log('[WSFEv1] Inyectado manualmente despues de CanMisMonExt/DocNro');
       } else {
-        console.log('[WSFEv1] Campo SI esta en el XML nativo de la libreria soap');
+        console.log('[WSFEv1] CondicionIvaReceptorId ya presente en XML');
       }
-      // Log del request body completo (solo la parte FeCAEReq)
-      var start = data.indexOf('<FeCAEReq');
-      if (start === -1) start = data.indexOf('FeCAEReq');
-      var end = data.indexOf('</FeCAEReq>');
-      if (start !== -1 && end !== -1) {
-        console.log('[WSFEv1] FeCAEReq XML:', data.substring(start, end + 11));
+      // Log XML detalle
+      var start = data.indexOf('<FECAEDetRequest>');
+      var end = data.indexOf('</FECAEDetRequest>') + 18;
+      if (start !== -1 && end > start) {
+        console.log('[WSFEv1] FINAL XML:', data.substring(start, end));
       }
     }
     return originalHttpRequest.call(this, rurl, data, callback, exheaders, exoptions);
