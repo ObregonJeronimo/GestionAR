@@ -152,7 +152,9 @@ app.get('/api/parametros/puntos-venta', async (req, res) => {
 });
 
 // ── Iniciar servidor ──────────────────────────────
+// Railway asigna PORT automáticamente, escuchar en 0.0.0.0 para aceptar conexiones externas
 
-app.listen(config.port, () => {
-  console.log(`\n🏛️  API ARCA | Entorno: ${config.env} | Puerto: ${config.port} | CUIT: ${config.cuit}\n`);
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🏛️  API ARCA | Entorno: ${config.env} | Puerto: ${PORT} | CUIT: ${config.cuit}\n`);
 });
