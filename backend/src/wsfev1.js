@@ -96,8 +96,7 @@ export async function solicitarCAE(factura) {
     },
   };
 
-  // Interceptar XML SOAP para inyectar CondicionIvaReceptorId
-  const condTag = '<CondicionIvaReceptorId>' + condIVA + '</CondicionIvaReceptorId>';
+  // Interceptar XML SOAP para inyectar CondicionIvaReceptorId con namespace correcto
   const originalHttpRequest = client.httpClient.request;
   let intercepted = false;
 
@@ -105,14 +104,23 @@ export async function solicitarCAE(factura) {
     if (!intercepted && data && data.includes('FECAEDetRequest')) {
       intercepted = true;
       if (!data.includes('CondicionIvaReceptorId')) {
-        // Insertar despues de DocNro segun orden oficial del XML de ARCA
-        data = data.replace(/<\/DocNro>/, '</DocNro>' + condTag);
-        console.log('[WSFEv1] Inyectado CondicionIvaReceptorId:', condIVA);
-        // Log del XML del detalle para debug
-        var start = data.indexOf('<FECAEDetRequest>');
-        var end = data.indexOf('</FECAEDetRequest>') + 18;
-        if (start !== -1 && end !== -1) {
-          console.log('[WSFEv1] XML FECAEDetRequest:', data.substring(start, end));
+        // Detectar el namespace prefix usado por la libreria soap
+        // Buscar el patron <PREFIX:DocNro> para extraer el prefix
+        var nsMatch = data.match(/<([a-zA-Z0-9]+):DocNro>/);
+        var condTag;
+        if (nsMatch) {
+          var ns = nsMatch[1];
+          condTag = '<' + ns + ':CondicionIvaReceptorId>' + condIVA + '</' + ns + ':CondicionIvaReceptorId>';
+          data = data.replace('</' + ns + ':DocNro>', '</' + ns + ':DocNro>' + condTag);
+        } else {
+          condTag = '<CondicionIvaReceptorId>' + condIVA + '</CondicionIvaReceptorId>';
+          data = data.replace('</DocNro>', '</DocNro>' + condTag);
+        }
+        console.log('[WSFEv1] Inyectado CondicionIvaReceptorId con tag:', condTag);
+        // Log fragmento relevante
+        var idx = data.indexOf('DocNro');
+        if (idx !== -1) {
+          console.log('[WSFEv1] XML around DocNro:', data.substring(idx - 10, idx + 200));
         }
       }
     }
