@@ -9,8 +9,17 @@ let soapClient = null;
 
 async function getClient() {
   if (!soapClient) {
-    soapClient = await soap.createClientAsync(config.wsfev1.wsdl);
+    // Forzar que no cachee el WSDL y use la version mas reciente
+    soapClient = await soap.createClientAsync(config.wsfev1.wsdl, {
+      disableCache: true,
+      forceSoap12Headers: false,
+    });
     soapClient.setEndpoint(config.wsfev1.url);
+
+    // Verificar si el WSDL tiene el campo CondicionIvaReceptorId
+    var wsdlXml = JSON.stringify(soapClient.describe());
+    console.log('[WSFEv1] WSDL tiene CondicionIvaReceptorId:', wsdlXml.includes('CondicionIvaReceptorId'));
+    console.log('[WSFEv1] WSDL tiene CanMisMonExt:', wsdlXml.includes('CanMisMonExt'));
   }
   return soapClient;
 }
@@ -57,6 +66,7 @@ export async function solicitarCAE(factura) {
     Concepto: factura.concepto,
     DocTipo: factura.docTipo,
     DocNro: factura.docNro,
+    CondicionIvaReceptorId: condIVA,
     CbteDesde: factura.cbteDesde,
     CbteHasta: factura.cbteHasta,
     CbteFch: factura.cbteFch,
@@ -96,32 +106,27 @@ export async function solicitarCAE(factura) {
     },
   };
 
-  // Interceptar XML SOAP para inyectar CondicionIvaReceptorId con namespace correcto
+  // Interceptar para asegurar que CondicionIvaReceptorId esta en el XML
   const originalHttpRequest = client.httpClient.request;
   let intercepted = false;
 
   client.httpClient.request = function(rurl, data, callback, exheaders, exoptions) {
     if (!intercepted && data && data.includes('FECAEDetRequest')) {
       intercepted = true;
+      // Si la libreria soap filtro el campo, inyectarlo manualmente
       if (!data.includes('CondicionIvaReceptorId')) {
-        // Detectar el namespace prefix usado por la libreria soap
-        // Buscar el patron <PREFIX:DocNro> para extraer el prefix
-        var nsMatch = data.match(/<([a-zA-Z0-9]+):DocNro>/);
-        var condTag;
-        if (nsMatch) {
-          var ns = nsMatch[1];
-          condTag = '<' + ns + ':CondicionIvaReceptorId>' + condIVA + '</' + ns + ':CondicionIvaReceptorId>';
-          data = data.replace('</' + ns + ':DocNro>', '</' + ns + ':DocNro>' + condTag);
-        } else {
-          condTag = '<CondicionIvaReceptorId>' + condIVA + '</CondicionIvaReceptorId>';
-          data = data.replace('</DocNro>', '</DocNro>' + condTag);
-        }
-        console.log('[WSFEv1] Inyectado CondicionIvaReceptorId con tag:', condTag);
-        // Log fragmento relevante
-        var idx = data.indexOf('DocNro');
-        if (idx !== -1) {
-          console.log('[WSFEv1] XML around DocNro:', data.substring(idx - 10, idx + 200));
-        }
+        var condTag = '<CondicionIvaReceptorId>' + condIVA + '</CondicionIvaReceptorId>';
+        data = data.replace('</DocNro>', '</DocNro>' + condTag);
+        console.log('[WSFEv1] Campo NO estaba en WSDL, inyectado manualmente');
+      } else {
+        console.log('[WSFEv1] Campo SI esta en el XML nativo de la libreria soap');
+      }
+      // Log del request body completo (solo la parte FeCAEReq)
+      var start = data.indexOf('<FeCAEReq');
+      if (start === -1) start = data.indexOf('FeCAEReq');
+      var end = data.indexOf('</FeCAEReq>');
+      if (start !== -1 && end !== -1) {
+        console.log('[WSFEv1] FeCAEReq XML:', data.substring(start, end + 11));
       }
     }
     return originalHttpRequest.call(this, rurl, data, callback, exheaders, exoptions);
