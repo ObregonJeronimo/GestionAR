@@ -96,16 +96,24 @@ export async function solicitarCAE(factura) {
     },
   };
 
-  const condIVATag = '<CondicionIVAReceptor>' + condIVA + '</CondicionIVAReceptor>';
+  // Interceptar XML SOAP para inyectar CondicionIvaReceptorId
+  // Nombre correcto del campo segun WSDL actualizado de ARCA (RG 5616)
+  // Va ANTES de CbteDesde segun el orden del XML oficial
+  const condTag = '<CondicionIvaReceptorId>' + condIVA + '</CondicionIvaReceptorId>';
   const originalHttpRequest = client.httpClient.request;
   let intercepted = false;
 
   client.httpClient.request = function(rurl, data, callback, exheaders, exoptions) {
     if (!intercepted && data && data.includes('FECAEDetRequest')) {
       intercepted = true;
-      if (!data.includes('CondicionIVAReceptor')) {
-        data = data.replace('</FECAEDetRequest>', condIVATag + '</FECAEDetRequest>');
-        console.log('[WSFEv1] XML inyectado con CondicionIVAReceptor:', condIVA);
+      if (!data.includes('CondicionIvaReceptorId')) {
+        // Insertar antes de <CbteDesde> para respetar orden del WSDL
+        if (data.includes('<CbteDesde>')) {
+          data = data.replace('<CbteDesde>', condTag + '<CbteDesde>');
+        } else {
+          data = data.replace('</FECAEDetRequest>', condTag + '</FECAEDetRequest>');
+        }
+        console.log('[WSFEv1] Inyectado CondicionIvaReceptorId:', condIVA);
       }
     }
     return originalHttpRequest.call(this, rurl, data, callback, exheaders, exoptions);
