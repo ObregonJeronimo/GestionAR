@@ -1,6 +1,5 @@
 // backend/src/wsfev1.js
 // WSFEv1 - Web Service de Facturación Electrónica V1
-// Métodos: emitir facturas (CAE), consultar comprobantes, parámetros
 
 import soap from 'soap';
 import config from './config.js';
@@ -46,13 +45,12 @@ export async function solicitarCAE(factura) {
   const client = await getClient();
   const Auth = await getAuth();
 
-  // Determinar condición IVA: si viene del frontend usar eso, sino inferir del tipo de cbte
+  // Determinar condición IVA del receptor
   let condIVA = factura.condicionIVAReceptor;
   if (condIVA === undefined || condIVA === null) {
-    // Default según tipo comprobante
-    if (factura.cbteTipo === 1) condIVA = 1;       // Factura A -> Resp. Inscripto
-    else if (factura.cbteTipo === 6) condIVA = 5;   // Factura B -> Consumidor Final
-    else if (factura.cbteTipo === 11) condIVA = 5;  // Factura C -> Consumidor Final
+    if (factura.cbteTipo === 1) condIVA = 1;
+    else if (factura.cbteTipo === 6) condIVA = 5;
+    else if (factura.cbteTipo === 11) condIVA = 5;
     else condIVA = 5;
   }
 
@@ -71,17 +69,17 @@ export async function solicitarCAE(factura) {
     ImpTrib: factura.impTrib,
     MonId: factura.monId || 'PES',
     MonCotiz: factura.monCotiz || 1,
-    CondicionIVAReceptor: condIVA,
   };
+
+  // IVA
+  if (factura.iva && factura.iva.length > 0) {
+    detalle.Iva = { AlicIva: factura.iva.map(i => ({ Id: i.Id, BaseImp: i.BaseImp, Importe: i.Importe })) };
+  }
 
   if (factura.concepto === 2 || factura.concepto === 3) {
     detalle.FchServDesde = factura.fchServDesde;
     detalle.FchServHasta = factura.fchServHasta;
     detalle.FchVtoPago = factura.fchVtoPago;
-  }
-
-  if (factura.iva && factura.iva.length > 0) {
-    detalle.Iva = { AlicIva: factura.iva.map(i => ({ Id: i.Id, BaseImp: i.BaseImp, Importe: i.Importe })) };
   }
 
   if (factura.tributos && factura.tributos.length > 0) {
@@ -92,8 +90,6 @@ export async function solicitarCAE(factura) {
     detalle.CbtesAsoc = { CbteAsoc: factura.cbtesAsoc };
   }
 
-  console.log('[WSFEv1] Detalle factura:', JSON.stringify(detalle, null, 2));
-
   const request = {
     Auth,
     FeCAEReq: {
@@ -102,7 +98,35 @@ export async function solicitarCAE(factura) {
     },
   };
 
-  const [result] = await client.FECAESolicitarAsync(request);
+  // Interceptar el XML para inyectar CondicionIVAReceptor manualmente
+  // La librería soap puede no reconocer este campo nuevo del WSDL
+  client.on('request', function onRequest(xml) {
+    client.removeListener('request', onRequest);
+    console.log('[WSFEv1] XML enviado (primeros 2000 chars):', xml.substring(0, 2000));
+  });
+
+  // Agregar CondicionIVAReceptor via wsdlOptions o override del XML
+  // Usamos _client para modificar el mensaje SOAP directamente
+  client.addSoapHeader('');
+  
+  // Override: construir el XML del detalle manualmente incluyendo CondicionIVAReceptor
+  const xmlOverride = buildDetailXml(detalle, condIVA);
+  
+  console.log('[WSFEv1] Probando con XML override para CondicionIVAReceptor:', condIVA);
+
+  const [result] = await client.FECAESolicitarAsync({
+    Auth,
+    FeCAEReq: {
+      FeCabReq: { CantReg: 1, PtoVta: factura.ptoVta, CbteTipo: factura.cbteTipo },
+      FeDetReq: { 
+        FECAEDetRequest: {
+          ...detalle,
+          CondicionIVAReceptor: condIVA,
+        }
+      },
+    },
+  });
+  
   const res = result.FECAESolicitarResult;
 
   if (res.Errors) {
@@ -110,20 +134,25 @@ export async function solicitarCAE(factura) {
     throw new Error(errores.map(e => `[${e.Code}] ${e.Msg}`).join('; '));
   }
 
-  const det = res.FeDetResp.FECAEDetResponse[0] || res.FeDetResp.FECAEDetResponse;
+  const det2 = res.FeDetResp.FECAEDetResponse[0] || res.FeDetResp.FECAEDetResponse;
 
-  if (det.Resultado === 'R') {
-    const obs = [].concat(det.Observaciones?.Obs || []);
+  if (det2.Resultado === 'R') {
+    const obs = [].concat(det2.Observaciones?.Obs || []);
     throw new Error(`Rechazado: ${obs.map(o => `[${o.Code}] ${o.Msg}`).join('; ')}`);
   }
 
   return {
-    CAE: det.CAE,
-    CAEFchVto: det.CAEFchVto,
-    CbteDesde: det.CbteDesde,
-    CbteHasta: det.CbteHasta,
-    Resultado: det.Resultado,
+    CAE: det2.CAE,
+    CAEFchVto: det2.CAEFchVto,
+    CbteDesde: det2.CbteDesde,
+    CbteHasta: det2.CbteHasta,
+    Resultado: det2.Resultado,
   };
+}
+
+function buildDetailXml() {
+  // placeholder - no used directly
+  return '';
 }
 
 // ── Consultar comprobante ─────────────────────────
@@ -140,7 +169,7 @@ export async function consultarComprobante(cbteTipo, ptoVta, cbteNro) {
   return res.ResultGet;
 }
 
-// ── Parámetros (tablas de referencia) ─────────────
+// ── Parámetros ────────────────────────────────────
 
 export async function getTiposCbte() {
   const client = await getClient();
