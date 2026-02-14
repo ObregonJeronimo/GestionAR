@@ -1,0 +1,5 @@
+# Colocá aquí tus certificados:
+# - MiClavePrivada.key  (generada con openssl)
+# - MiCertificado.pem   (descargado de WSASS/ARCA)
+#
+# ⚠️ NUNCA commitear certificados reales al repo

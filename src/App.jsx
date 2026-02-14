@@ -7,6 +7,7 @@ import Ventas from './pages/Ventas'
 import Clientes from './pages/Clientes'
 import Proveedores from './pages/Proveedores'
 import Reportes from './pages/Reportes'
+import Facturacion from './pages/Facturacion'
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/inventario" element={<Inventario />} />
             <Route path="/ventas" element={<Ventas />} />
+            <Route path="/facturacion" element={<Facturacion />} />
             <Route path="/clientes" element={<Clientes />} />
             <Route path="/proveedores" element={<Proveedores />} />
             <Route path="/reportes" element={<Reportes />} />
