@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { FileText, Send, CheckCircle, AlertCircle, Loader2, RefreshCw, X } from 'lucide-react'
 import Modal from '../components/Modal'
 import { getClientes, getVentas } from '../utils/storage'
-import { emitirFactura, verificarEstadoArca, ultimoComprobante } from '../services/arcaApi'
+import { emitirFactura, verificarEstadoArca } from '../services/arcaApi'
 
 const TIPOS_CBTE = [
   { id: 1, label: 'Factura A', desc: 'Responsable Inscripto → Resp. Inscripto' },
@@ -16,6 +16,19 @@ const TIPOS_CONCEPTO = [
   { id: 3, label: 'Productos y Servicios' },
 ]
 
+// Condiciones frente al IVA del receptor (RG 5616)
+const CONDICIONES_IVA = [
+  { id: 1, label: 'IVA Responsable Inscripto' },
+  { id: 4, label: 'IVA Sujeto Exento' },
+  { id: 5, label: 'Consumidor Final' },
+  { id: 6, label: 'Responsable Monotributo' },
+  { id: 8, label: 'Proveedor del Exterior' },
+  { id: 9, label: 'Cliente del Exterior' },
+  { id: 10, label: 'IVA Liberado - Ley Nº 19.640' },
+  { id: 13, label: 'Monotributista Social' },
+  { id: 15, label: 'IVA No Alcanzado' },
+]
+
 export default function Facturacion() {
   const [estadoArca, setEstadoArca] = useState(null)
   const [checking, setChecking] = useState(false)
@@ -24,17 +37,18 @@ export default function Facturacion() {
   const [modalOpen, setModalOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [emitting, setEmitting] = useState(false)
-  const [facturas, setFacturas] = useState([]) // facturas emitidas en esta sesión
+  const [facturas, setFacturas] = useState([])
   const [resultado, setResultado] = useState(null)
   const [error, setError] = useState(null)
 
   // Form state
   const [ventaId, setVentaId] = useState('')
-  const [cbteTipo, setCbteTipo] = useState(6) // default Factura B
+  const [cbteTipo, setCbteTipo] = useState(6)
   const [concepto, setConcepto] = useState(1)
   const [docTipo, setDocTipo] = useState(99)
   const [docNro, setDocNro] = useState('')
   const [ptoVta, setPtoVta] = useState(1)
+  const [condicionIVA, setCondicionIVA] = useState(5) // default: Consumidor Final
 
   // Servicios dates
   const [fchServDesde, setFchServDesde] = useState('')
@@ -70,9 +84,7 @@ export default function Facturacion() {
   const calcularImportes = () => {
     if (!ventaSeleccionada) return { impTotal: 0, impNeto: 0, impIVA: 0 }
     const total = ventaSeleccionada.total
-    // Factura C (monotributo): no desglosa IVA
     if (cbteTipo === 11) return { impTotal: total, impNeto: total, impIVA: 0, iva: [] }
-    // Factura A o B: desglosar IVA 21%
     const neto = Math.round((total / 1.21) * 100) / 100
     const iva = Math.round((total - neto) * 100) / 100
     return {
@@ -97,6 +109,7 @@ export default function Facturacion() {
       concepto,
       docTipo,
       docNro: docTipo === 99 ? 0 : Number(docNro),
+      condicionIVAReceptor: condicionIVA,
       impTotal: importes.impTotal,
       impNeto: importes.impNeto,
       impIVA: importes.impIVA,
@@ -130,9 +143,27 @@ export default function Facturacion() {
     setConcepto(1)
     setDocTipo(99)
     setDocNro('')
+    setCondicionIVA(5)
     setFchServDesde('')
     setFchServHasta('')
     setFchVtoPago('')
+  }
+
+  // Auto-ajustar condición IVA según tipo de factura
+  const handleCbteTipoChange = (tipo) => {
+    setCbteTipo(tipo)
+    if (tipo === 1) {
+      setDocTipo(80)
+      setCondicionIVA(1) // Resp. Inscripto
+    } else if (tipo === 6) {
+      setDocTipo(99)
+      setDocNro('')
+      setCondicionIVA(5) // Consumidor Final
+    } else if (tipo === 11) {
+      setDocTipo(99)
+      setDocNro('')
+      setCondicionIVA(5) // Consumidor Final
+    }
   }
 
   const tipoLabel = (tipo) => TIPOS_CBTE.find(t => t.id === tipo)?.label || tipo
@@ -252,12 +283,7 @@ export default function Facturacion() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de factura</label>
-              <select value={cbteTipo} onChange={e => {
-                const tipo = Number(e.target.value)
-                setCbteTipo(tipo)
-                if (tipo === 6 || tipo === 11) { setDocTipo(99); setDocNro('') }
-                else { setDocTipo(80) }
-              }} className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none">
+              <select value={cbteTipo} onChange={e => handleCbteTipoChange(Number(e.target.value))} className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none">
                 {TIPOS_CBTE.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
               <p className="text-xs text-gray-400 mt-0.5">{TIPOS_CBTE.find(t => t.id === cbteTipo)?.desc}</p>
@@ -270,10 +296,18 @@ export default function Facturacion() {
             </div>
           </div>
 
-          {/* Punto de venta */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Punto de venta</label>
-            <input type="number" min="1" value={ptoVta} onChange={e => setPtoVta(Number(e.target.value))} className="w-24 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none" />
+          {/* Punto de venta + Condición IVA receptor */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Punto de venta</label>
+              <input type="number" min="1" value={ptoVta} onChange={e => setPtoVta(Number(e.target.value))} className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Condición IVA receptor</label>
+              <select value={condicionIVA} onChange={e => setCondicionIVA(Number(e.target.value))} className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none">
+                {CONDICIONES_IVA.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </div>
           </div>
 
           {/* Documento del receptor */}

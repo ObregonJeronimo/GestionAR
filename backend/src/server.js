@@ -21,7 +21,7 @@ app.use(cors({
     if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
       callback(null, true);
     } else {
-      callback(null, true); // permisivo en desarrollo
+      callback(null, true);
     }
   },
 }));
@@ -75,6 +75,7 @@ app.post('/api/facturas/emitir', async (req, res) => {
       concepto: data.concepto,
       docTipo: data.docTipo || 99,
       docNro: data.docNro || 0,
+      condicionIVAReceptor: data.condicionIVAReceptor,
       cbteDesde: siguiente,
       cbteHasta: siguiente,
       cbteFch: data.cbteFch || hoy,
@@ -152,7 +153,6 @@ app.get('/api/parametros/puntos-venta', async (req, res) => {
 });
 
 // ── Iniciar servidor ──────────────────────────────
-// Railway asigna PORT automáticamente, escuchar en 0.0.0.0 para aceptar conexiones externas
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {

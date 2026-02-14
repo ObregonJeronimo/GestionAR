@@ -63,6 +63,11 @@ export async function solicitarCAE(factura) {
     MonCotiz: factura.monCotiz || 1,
   };
 
+  // Condición IVA del receptor (obligatorio según RG 5616)
+  if (factura.condicionIVAReceptor) {
+    detalle.CondicionIVAReceptor = factura.condicionIVAReceptor;
+  }
+
   if (factura.concepto === 2 || factura.concepto === 3) {
     detalle.FchServDesde = factura.fchServDesde;
     detalle.FchServHasta = factura.fchServHasta;
