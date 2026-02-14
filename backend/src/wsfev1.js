@@ -46,6 +46,16 @@ export async function solicitarCAE(factura) {
   const client = await getClient();
   const Auth = await getAuth();
 
+  // Determinar condición IVA: si viene del frontend usar eso, sino inferir del tipo de cbte
+  let condIVA = factura.condicionIVAReceptor;
+  if (condIVA === undefined || condIVA === null) {
+    // Default según tipo comprobante
+    if (factura.cbteTipo === 1) condIVA = 1;       // Factura A -> Resp. Inscripto
+    else if (factura.cbteTipo === 6) condIVA = 5;   // Factura B -> Consumidor Final
+    else if (factura.cbteTipo === 11) condIVA = 5;  // Factura C -> Consumidor Final
+    else condIVA = 5;
+  }
+
   const detalle = {
     Concepto: factura.concepto,
     DocTipo: factura.docTipo,
@@ -61,12 +71,8 @@ export async function solicitarCAE(factura) {
     ImpTrib: factura.impTrib,
     MonId: factura.monId || 'PES',
     MonCotiz: factura.monCotiz || 1,
+    CondicionIVAReceptor: condIVA,
   };
-
-  // Condición IVA del receptor (obligatorio según RG 5616)
-  if (factura.condicionIVAReceptor) {
-    detalle.CondicionIVAReceptor = factura.condicionIVAReceptor;
-  }
 
   if (factura.concepto === 2 || factura.concepto === 3) {
     detalle.FchServDesde = factura.fchServDesde;
@@ -85,6 +91,8 @@ export async function solicitarCAE(factura) {
   if (factura.cbtesAsoc && factura.cbtesAsoc.length > 0) {
     detalle.CbtesAsoc = { CbteAsoc: factura.cbtesAsoc };
   }
+
+  console.log('[WSFEv1] Detalle factura:', JSON.stringify(detalle, null, 2));
 
   const request = {
     Auth,
