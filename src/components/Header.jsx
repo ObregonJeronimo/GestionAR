@@ -6,10 +6,11 @@ const titles = {
   '/': 'Dashboard',
   '/inventario': 'Inventario de Productos',
   '/ventas': 'Ventas',
-  '/facturacion': 'Facturaci\u00f3n',
+  '/facturacion': 'Facturacion',
   '/clientes': 'Clientes',
   '/proveedores': 'Proveedores',
   '/reportes': 'Reportes',
+  '/configuracion': 'Configuracion ARCA',
 }
 
 export default function Header() {
@@ -34,7 +35,7 @@ export default function Header() {
             <User size={16} className="text-gray-400" />
             <span>{user?.displayName || user?.email}</span>
           </div>
-          <button onClick={logout} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Cerrar sesi\u00f3n">
+          <button onClick={logout} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Cerrar sesion">
             <LogOut size={18} />
           </button>
         </div>

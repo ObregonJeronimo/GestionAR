@@ -8,13 +8,14 @@ import {
   Truck,
   BarChart3,
   Paintbrush,
+  Settings,
 } from 'lucide-react'
 
 const links = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/inventario', icon: Package, label: 'Inventario' },
   { to: '/ventas', icon: ShoppingCart, label: 'Ventas' },
-  { to: '/facturacion', icon: FileText, label: 'Facturación' },
+  { to: '/facturacion', icon: FileText, label: 'Facturacion' },
   { to: '/clientes', icon: Users, label: 'Clientes' },
   { to: '/proveedores', icon: Truck, label: 'Proveedores' },
   { to: '/reportes', icon: BarChart3, label: 'Reportes' },
@@ -46,6 +47,21 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      <div className="border-t border-slate-700">
+        <NavLink
+          to="/configuracion"
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-6 py-3 text-sm font-medium transition-colors ${
+              isActive
+                ? 'bg-slate-700 text-amber-400 border-r-4 border-amber-400'
+                : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'
+            }`
+          }
+        >
+          <Settings size={20} />
+          Configuracion ARCA
+        </NavLink>
+      </div>
       <div className="px-6 py-4 border-t border-slate-700 text-slate-400 text-xs">
         GestionAR v1.0
       </div>

@@ -11,6 +11,7 @@ import Clientes from './pages/Clientes'
 import Proveedores from './pages/Proveedores'
 import Reportes from './pages/Reportes'
 import Facturacion from './pages/Facturacion'
+import ConfiguracionArca from './pages/ConfiguracionArca'
 
 function ProtectedLayout() {
   return (
@@ -27,6 +28,7 @@ function ProtectedLayout() {
             <Route path="/clientes" element={<Clientes />} />
             <Route path="/proveedores" element={<Proveedores />} />
             <Route path="/reportes" element={<Reportes />} />
+            <Route path="/configuracion" element={<ConfiguracionArca />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </main>
