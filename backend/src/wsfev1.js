@@ -1,28 +1,34 @@
 // backend/src/wsfev1.js
-// WSFEv1 - Web Service de Facturación Electrónica V1
+// WSFEv1 - Web Service de Facturacion Electronica V1
+// Ahora lee config desde Firebase via getConfig()
 
 import soap from 'soap';
-import config from './config.js';
+import { getConfig } from './config.js';
 import { obtenerTicketAcceso } from './wsaa.js';
 
 let soapClient = null;
+let clientWsdl = null;
 
 async function getClient() {
-  if (!soapClient) {
+  const config = await getConfig();
+  // Recrear cliente si cambio el WSDL (ej: cambio de entorno)
+  if (!soapClient || clientWsdl !== config.wsfev1.wsdl) {
     soapClient = await soap.createClientAsync(config.wsfev1.wsdl, {
       disableCache: true,
     });
     soapClient.setEndpoint(config.wsfev1.url);
+    clientWsdl = config.wsfev1.wsdl;
   }
   return soapClient;
 }
 
 async function getAuth() {
+  const config = await getConfig();
   const { token, sign } = await obtenerTicketAcceso();
   return { Token: token, Sign: sign, Cuit: config.cuit };
 }
 
-// ── Verificación ──────────────────────────────────
+// -- Verificacion --
 
 export async function dummy() {
   const client = await getClient();
@@ -30,7 +36,7 @@ export async function dummy() {
   return result.FEDummyResult;
 }
 
-// ── Consultas ─────────────────────────────────────
+// -- Consultas --
 
 export async function ultimoComprobante(ptoVta, cbteTipo) {
   const client = await getClient();
@@ -41,7 +47,7 @@ export async function ultimoComprobante(ptoVta, cbteTipo) {
   return res.CbteNro;
 }
 
-// ── Solicitar CAE (emitir factura) ────────────────
+// -- Solicitar CAE (emitir factura) --
 
 export async function solicitarCAE(factura) {
   const client = await getClient();
@@ -126,7 +132,7 @@ export async function solicitarCAE(factura) {
   };
 }
 
-// ── Consultar comprobante ─────────────────────────
+// -- Consultar comprobante --
 
 export async function consultarComprobante(cbteTipo, ptoVta, cbteNro) {
   const client = await getClient();
@@ -140,7 +146,7 @@ export async function consultarComprobante(cbteTipo, ptoVta, cbteNro) {
   return res.ResultGet;
 }
 
-// ── Parámetros ────────────────────────────────────
+// -- Parametros --
 
 export async function getTiposCbte() {
   const client = await getClient();

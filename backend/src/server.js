@@ -1,10 +1,13 @@
 // backend/src/server.js
 // API Express - Conecta GestionAR (React) con ARCA Web Services
+// Ahora lee configuracion desde Firebase
 
 import express from 'express';
 import cors from 'cors';
-import config from './config.js';
-import { obtenerTicketAcceso } from './wsaa.js';
+import staticConfig from './config.js';
+import { getConfig } from './config.js';
+import { obtenerTicketAcceso, invalidarTicket } from './wsaa.js';
+import { invalidarConfigCache } from './firebaseConfig.js';
 import * as wsfev1 from './wsfev1.js';
 
 const app = express();
@@ -27,13 +30,18 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ── Health ────────────────────────────────────────
+// -- Health --
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', env: config.env, cuit: config.cuit });
+app.get('/api/health', async (req, res) => {
+  try {
+    const config = await getConfig();
+    res.json({ status: 'ok', env: config.env, cuit: config.cuit, source: config.source });
+  } catch (err) {
+    res.json({ status: 'ok', env: 'unknown', source: 'none', error: err.message });
+  }
 });
 
-// ── Estado ARCA ───────────────────────────────────
+// -- Estado ARCA --
 
 app.get('/api/arca/status', async (req, res) => {
   try {
@@ -44,7 +52,7 @@ app.get('/api/arca/status', async (req, res) => {
   }
 });
 
-// ── Autenticación ─────────────────────────────────
+// -- Autenticacion --
 
 app.post('/api/arca/auth', async (req, res) => {
   try {
@@ -55,7 +63,16 @@ app.post('/api/arca/auth', async (req, res) => {
   }
 });
 
-// ── Emitir Factura ────────────────────────────────
+// -- Refrescar config (cuando el cliente guarda nueva config en Firebase) --
+
+app.post('/api/arca/refresh-config', (req, res) => {
+  invalidarConfigCache();
+  invalidarTicket();
+  console.log('[Config] Cache de configuracion y ticket invalidados');
+  res.json({ ok: true, message: 'Configuracion refrescada' });
+});
+
+// -- Emitir Factura --
 
 app.post('/api/facturas/emitir', async (req, res) => {
   try {
@@ -112,7 +129,7 @@ app.post('/api/facturas/emitir', async (req, res) => {
   }
 });
 
-// ── Consultar último comprobante ──────────────────
+// -- Consultar ultimo comprobante --
 
 app.get('/api/facturas/ultimo/:ptoVta/:cbteTipo', async (req, res) => {
   try {
@@ -123,7 +140,7 @@ app.get('/api/facturas/ultimo/:ptoVta/:cbteTipo', async (req, res) => {
   }
 });
 
-// ── Consultar comprobante emitido ─────────────────
+// -- Consultar comprobante emitido --
 
 app.get('/api/facturas/consultar/:cbteTipo/:ptoVta/:cbteNro', async (req, res) => {
   try {
@@ -135,7 +152,7 @@ app.get('/api/facturas/consultar/:cbteTipo/:ptoVta/:cbteNro', async (req, res) =
   }
 });
 
-// ── Parámetros ────────────────────────────────────
+// -- Parametros --
 
 app.get('/api/parametros/tipos-comprobante', async (req, res) => {
   try { res.json({ ok: true, data: await wsfev1.getTiposCbte() }); }
@@ -152,9 +169,15 @@ app.get('/api/parametros/puntos-venta', async (req, res) => {
   catch (error) { res.status(500).json({ ok: false, error: error.message }); }
 });
 
-// ── Iniciar servidor ──────────────────────────────
+// -- Iniciar servidor --
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🏛️  API ARCA | Entorno: ${config.env} | Puerto: ${PORT} | CUIT: ${config.cuit}\n`);
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`\nAPI ARCA | Puerto: ${PORT}`);
+  try {
+    const config = await getConfig();
+    console.log(`Entorno: ${config.env} | CUIT: ${config.cuit} | Source: ${config.source}\n`);
+  } catch (err) {
+    console.log(`Config: pendiente (${err.message})\n`);
+  }
 });

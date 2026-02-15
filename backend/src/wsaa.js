@@ -1,30 +1,33 @@
 // backend/src/wsaa.js
-// WSAA - Web Service de Autenticación y Autorización de ARCA
+// WSAA - Web Service de Autenticacion y Autorizacion de ARCA
 // Genera TRA, firma CMS con certificado X.509, obtiene Token+Sign
+// Ahora lee certificados desde Firebase via getConfig()
 
 import fs from 'fs';
 import forge from 'node-forge';
 import soap from 'soap';
 import { parseStringPromise } from 'xml2js';
-import config from './config.js';
+import { getConfig } from './config.js';
 
 let ticketAcceso = null;
 let ticketExpiration = null;
 
 /**
- * Obtiene el contenido del certificado (desde env o archivo)
+ * Obtiene el contenido del certificado
  */
-function getCert() {
+function getCert(config) {
   if (config.certContent) return config.certContent.replace(/\\n/g, '\n');
-  return fs.readFileSync(config.certPath, 'utf8');
+  if (config.certPath) return fs.readFileSync(config.certPath, 'utf8');
+  throw new Error('No hay certificado configurado');
 }
 
 /**
- * Obtiene el contenido de la clave privada (desde env o archivo)
+ * Obtiene el contenido de la clave privada
  */
-function getKey() {
+function getKey(config) {
   if (config.keyContent) return config.keyContent.replace(/\\n/g, '\n');
-  return fs.readFileSync(config.keyPath, 'utf8');
+  if (config.keyPath) return fs.readFileSync(config.keyPath, 'utf8');
+  throw new Error('No hay clave privada configurada');
 }
 
 /**
@@ -43,7 +46,7 @@ function formatDateForArca(date) {
 /**
  * Genera el TRA (Ticket de Requerimiento de Acceso) en XML
  */
-function generarTRA() {
+function generarTRA(serviceName) {
   const now = new Date();
   const generationTime = new Date(now.getTime() - 10 * 60 * 1000);
   const expirationTime = new Date(now.getTime() + 10 * 60 * 60 * 1000);
@@ -55,16 +58,16 @@ function generarTRA() {
     <generationTime>${formatDateForArca(generationTime)}</generationTime>
     <expirationTime>${formatDateForArca(expirationTime)}</expirationTime>
   </header>
-  <service>${config.serviceName}</service>
+  <service>${serviceName}</service>
 </loginTicketRequest>`;
 }
 
 /**
  * Firma el TRA con certificado y clave privada usando PKCS#7/CMS
  */
-function firmarTRA(traXml) {
-  const certPem = getCert();
-  const keyPem = getKey();
+function firmarTRA(traXml, config) {
+  const certPem = getCert(config);
+  const keyPem = getKey(config);
 
   const cert = forge.pki.certificateFromPem(certPem);
   const key = forge.pki.privateKeyFromPem(keyPem);
@@ -90,7 +93,6 @@ function firmarTRA(traXml) {
 
 /**
  * Obtiene un Ticket de Acceso del WSAA (con cache y manejo de alreadyAuthenticated)
- * @returns {{ token: string, sign: string }}
  */
 export async function obtenerTicketAcceso() {
   if (ticketAcceso && ticketExpiration && new Date() < ticketExpiration) {
@@ -98,10 +100,12 @@ export async function obtenerTicketAcceso() {
     return ticketAcceso;
   }
 
-  console.log('[WSAA] Solicitando nuevo Ticket de Acceso...');
+  // Leer config fresca desde Firebase
+  const config = await getConfig();
+  console.log(`[WSAA] Solicitando nuevo Ticket de Acceso... (source: ${config.source})`);
 
-  const tra = generarTRA();
-  const cms = firmarTRA(tra);
+  const tra = generarTRA(config.serviceName);
+  const cms = firmarTRA(tra, config);
 
   try {
     const client = await soap.createClientAsync(config.wsaa.wsdl);
@@ -115,19 +119,18 @@ export async function obtenerTicketAcceso() {
     ticketAcceso = { token, sign };
     ticketExpiration = new Date(expTime);
 
-    console.log(`[WSAA] ✅ Ticket obtenido. Expira: ${ticketExpiration.toISOString()}`);
+    console.log(`[WSAA] Ticket obtenido. Expira: ${ticketExpiration.toISOString()}`);
     return ticketAcceso;
   } catch (error) {
     const errorMsg = error.message || '';
 
-    // Si ARCA dice "alreadyAuthenticated", esperar y reintentar
     if (errorMsg.includes('alreadyAuthenticated')) {
-      console.log('[WSAA] ⏳ Ya autenticado, esperando 30 segundos para reintentar...');
+      console.log('[WSAA] Ya autenticado, esperando 30 segundos para reintentar...');
       await new Promise(resolve => setTimeout(resolve, 30000));
 
       const client = await soap.createClientAsync(config.wsaa.wsdl);
-      const newTra = generarTRA();
-      const newCms = firmarTRA(newTra);
+      const newTra = generarTRA(config.serviceName);
+      const newCms = firmarTRA(newTra, config);
       const [result] = await client.loginCmsAsync({ in0: newCms });
 
       const parsed = await parseStringPromise(result.loginCmsReturn);
@@ -138,7 +141,7 @@ export async function obtenerTicketAcceso() {
       ticketAcceso = { token, sign };
       ticketExpiration = new Date(expTime);
 
-      console.log(`[WSAA] ✅ Ticket obtenido (reintento). Expira: ${ticketExpiration.toISOString()}`);
+      console.log(`[WSAA] Ticket obtenido (reintento). Expira: ${ticketExpiration.toISOString()}`);
       return ticketAcceso;
     }
 
