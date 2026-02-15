@@ -20,6 +20,7 @@ const COLLECTIONS = {
   VENTAS: 'ventas',
   CLIENTES: 'clientes',
   PROVEEDORES: 'proveedores',
+  FACTURAS: 'facturas',
 }
 
 // ============================================================
@@ -38,7 +39,7 @@ async function getAll(colName, ordenarPor) {
 }
 
 async function addItem(colName, data) {
-  const { id, ...rest } = data // no guardar "id" como campo, Firestore lo maneja
+  const { id, ...rest } = data
   const docRef = await addDoc(collection(db, colName), rest)
   return { id: docRef.id, ...rest }
 }
@@ -80,13 +81,8 @@ export async function getVentas() {
 }
 
 export async function saveVenta(venta) {
-  // Agregar fecha
   venta.fecha = new Date().toISOString()
-
-  // Guardar la venta
   const saved = await addItem(COLLECTIONS.VENTAS, venta)
-
-  // Descontar stock de cada producto vendido
   const batch = writeBatch(db)
   for (const item of venta.items) {
     const prodRef = doc(db, COLLECTIONS.PRODUCTOS, item.productoId)
@@ -97,7 +93,6 @@ export async function saveVenta(venta) {
     }
   }
   await batch.commit()
-
   return saved
 }
 
@@ -139,4 +134,19 @@ export async function saveProveedor(proveedor) {
 
 export async function deleteProveedor(id) {
   return removeItem(COLLECTIONS.PROVEEDORES, id)
+}
+
+// ============================================================
+// Facturas
+// ============================================================
+export async function getFacturas() {
+  return getAll(COLLECTIONS.FACTURAS)
+}
+
+export async function saveFactura(factura) {
+  return addItem(COLLECTIONS.FACTURAS, factura)
+}
+
+export async function deleteFactura(id) {
+  return removeItem(COLLECTIONS.FACTURAS, id)
 }

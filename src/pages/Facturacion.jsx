@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
-import { FileText, Send, CheckCircle, AlertCircle, Loader2, RefreshCw, X } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { FileText, Send, CheckCircle, AlertCircle, Loader2, RefreshCw, X, Eye, Printer } from 'lucide-react'
 import Modal from '../components/Modal'
-import { getClientes, getVentas } from '../utils/storage'
+import { getClientes, getVentas, getFacturas, saveFactura } from '../utils/storage'
 import { emitirFactura, verificarEstadoArca } from '../services/arcaApi'
 
 const TIPOS_CBTE = [
@@ -16,7 +16,6 @@ const TIPOS_CONCEPTO = [
   { id: 3, label: 'Productos y Servicios' },
 ]
 
-// Condiciones frente al IVA del receptor (RG 5616)
 const CONDICIONES_IVA = [
   { id: 1, label: 'IVA Responsable Inscripto' },
   { id: 4, label: 'IVA Sujeto Exento' },
@@ -35,11 +34,13 @@ export default function Facturacion() {
   const [ventas, setVentas] = useState([])
   const [clientes, setClientes] = useState([])
   const [modalOpen, setModalOpen] = useState(false)
+  const [detalleModal, setDetalleModal] = useState(null)
   const [loading, setLoading] = useState(true)
   const [emitting, setEmitting] = useState(false)
   const [facturas, setFacturas] = useState([])
   const [resultado, setResultado] = useState(null)
   const [error, setError] = useState(null)
+  const printRef = useRef(null)
 
   // Form state
   const [ventaId, setVentaId] = useState('')
@@ -48,9 +49,7 @@ export default function Facturacion() {
   const [docTipo, setDocTipo] = useState(99)
   const [docNro, setDocNro] = useState('')
   const [ptoVta, setPtoVta] = useState(1)
-  const [condicionIVA, setCondicionIVA] = useState(5) // default: Consumidor Final
-
-  // Servicios dates
+  const [condicionIVA, setCondicionIVA] = useState(5)
   const [fchServDesde, setFchServDesde] = useState('')
   const [fchServHasta, setFchServHasta] = useState('')
   const [fchVtoPago, setFchVtoPago] = useState('')
@@ -58,9 +57,11 @@ export default function Facturacion() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const [v, c] = await Promise.all([getVentas(), getClientes()])
+      const [v, c, f] = await Promise.all([getVentas(), getClientes(), getFacturas()])
       setVentas(v)
       setClientes(c)
+      // Ordenar facturas por fecha desc
+      setFacturas(f.sort((a, b) => new Date(b.fecha) - new Date(a.fecha)))
       setLoading(false)
     }
     load()
@@ -128,7 +129,26 @@ export default function Facturacion() {
     try {
       const res = await emitirFactura(payload)
       setResultado(res)
-      setFacturas(prev => [{ ...res, ventaId, clienteNombre: ventaSeleccionada.clienteNombre, total: importes.impTotal, fecha: new Date().toISOString() }, ...prev])
+
+      // Guardar factura en Firebase
+      const facturaData = {
+        ...res,
+        cbteTipo,
+        ptoVta,
+        concepto,
+        docTipo,
+        docNro: payload.docNro,
+        condicionIVA,
+        ventaId,
+        clienteNombre: ventaSeleccionada.clienteNombre,
+        items: ventaSeleccionada.items,
+        impTotal: importes.impTotal,
+        impNeto: importes.impNeto,
+        impIVA: importes.impIVA,
+        fecha: new Date().toISOString(),
+      }
+      const saved = await saveFactura(facturaData)
+      setFacturas(prev => [saved, ...prev])
       setModalOpen(false)
       resetForm()
     } catch (err) {
@@ -149,24 +169,102 @@ export default function Facturacion() {
     setFchVtoPago('')
   }
 
-  // Auto-ajustar condición IVA según tipo de factura
   const handleCbteTipoChange = (tipo) => {
     setCbteTipo(tipo)
     if (tipo === 1) {
       setDocTipo(80)
-      setCondicionIVA(1) // Resp. Inscripto
+      setCondicionIVA(1)
     } else if (tipo === 6) {
       setDocTipo(99)
       setDocNro('')
-      setCondicionIVA(5) // Consumidor Final
+      setCondicionIVA(5)
     } else if (tipo === 11) {
       setDocTipo(99)
       setDocNro('')
-      setCondicionIVA(5) // Consumidor Final
+      setCondicionIVA(5)
     }
   }
 
   const tipoLabel = (tipo) => TIPOS_CBTE.find(t => t.id === tipo)?.label || tipo
+  const condIVALabel = (id) => CONDICIONES_IVA.find(c => c.id === id)?.label || id
+  const conceptoLabel = (id) => TIPOS_CONCEPTO.find(t => t.id === id)?.label || id
+
+  const handlePrint = (factura) => {
+    const w = window.open('', '_blank', 'width=800,height=600')
+    const tipoFact = tipoLabel(factura.cbteTipo)
+    const letra = tipoFact?.split(' ')[1] || ''
+    const numero = String(factura.ptoVta).padStart(4, '0') + '-' + String(factura.numero).padStart(8, '0')
+    const fechaEmision = new Date(factura.fecha).toLocaleDateString('es-AR')
+    const condIVAReceptor = condIVALabel(factura.condicionIVA)
+
+    w.document.write(`<!DOCTYPE html><html><head><title>Factura ${numero}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: Arial, sans-serif; padding: 20px; color: #333; font-size: 13px; }
+      .factura { max-width: 800px; margin: 0 auto; border: 2px solid #333; }
+      .header { display: flex; border-bottom: 2px solid #333; }
+      .header-left, .header-right { flex: 1; padding: 15px; }
+      .header-center { width: 80px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-left: 2px solid #333; border-right: 2px solid #333; padding: 10px; }
+      .letra { font-size: 36px; font-weight: bold; }
+      .letra-cod { font-size: 9px; color: #666; }
+      .empresa { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+      .info-row { display: flex; justify-content: space-between; padding: 4px 15px; }
+      .info-section { border-bottom: 1px solid #ccc; padding: 10px 15px; }
+      .items-table { width: 100%; border-collapse: collapse; }
+      .items-table th { background: #f5f5f5; text-align: left; padding: 8px; border-bottom: 2px solid #333; font-size: 12px; }
+      .items-table td { padding: 8px; border-bottom: 1px solid #eee; }
+      .totales { padding: 15px; text-align: right; border-top: 2px solid #333; }
+      .totales .total-line { display: flex; justify-content: flex-end; gap: 20px; margin-bottom: 4px; }
+      .total-final { font-size: 18px; font-weight: bold; margin-top: 8px; }
+      .cae-section { border-top: 1px solid #ccc; padding: 12px 15px; display: flex; justify-content: space-between; font-size: 12px; }
+      .no-print { margin: 20px auto; max-width: 800px; text-align: center; }
+      .no-print button { padding: 10px 30px; background: #f59e0b; color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+      .no-print button:hover { background: #d97706; }
+      @media print { .no-print { display: none; } }
+    </style></head><body>
+    <div class="no-print"><button onclick="window.print()">🖨️ Imprimir Factura</button></div>
+    <div class="factura">
+      <div class="header">
+        <div class="header-left">
+          <div class="empresa">VALKYRIUM SOLUTIONS</div>
+          <div>Razón Social: OBREGON JERONIMO</div>
+          <div>Domicilio Comercial: Córdoba, Argentina</div>
+          <div>Condición frente al IVA: IVA Responsable Inscripto</div>
+        </div>
+        <div class="header-center">
+          <div class="letra">${letra}</div>
+          <div class="letra-cod">Cód. ${String(factura.cbteTipo).padStart(2, '0')}</div>
+        </div>
+        <div class="header-right" style="text-align:right">
+          <div style="font-size:16px;font-weight:bold">${tipoFact}</div>
+          <div style="font-size:16px;font-weight:bold">Nro: ${numero}</div>
+          <div>Fecha de Emisión: ${fechaEmision}</div>
+          <div>CUIT: 20-44740418-5</div>
+          <div>Punto de Venta: ${String(factura.ptoVta).padStart(4, '0')}</div>
+        </div>
+      </div>
+      <div class="info-section">
+        <div class="info-row"><span><strong>Cliente:</strong> ${factura.clienteNombre}</span><span><strong>Condición IVA:</strong> ${condIVAReceptor}</span></div>
+        <div class="info-row"><span><strong>Tipo Doc:</strong> ${factura.docTipo === 80 ? 'CUIT' : factura.docTipo === 99 ? 'Consumidor Final' : factura.docTipo === 96 ? 'DNI' : factura.docTipo}</span><span><strong>Nro Doc:</strong> ${factura.docNro || '0'}</span></div>
+      </div>
+      <table class="items-table">
+        <thead><tr><th>Descripción</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Precio Unit.</th><th style="text-align:right">Subtotal</th></tr></thead>
+        <tbody>
+          ${(factura.items || []).map(item => `<tr><td>${item.nombre}</td><td style="text-align:right">${item.cantidad}</td><td style="text-align:right">$${Number(item.precio).toLocaleString('es-AR')}</td><td style="text-align:right">$${(item.precio * item.cantidad).toLocaleString('es-AR')}</td></tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="totales">
+        <div class="total-line"><span>Neto Gravado:</span><span>$${Number(factura.impNeto || 0).toLocaleString('es-AR')}</span></div>
+        <div class="total-line"><span>IVA 21%:</span><span>$${Number(factura.impIVA || 0).toLocaleString('es-AR')}</span></div>
+        <div class="total-final">TOTAL: $${Number(factura.impTotal || 0).toLocaleString('es-AR')}</div>
+      </div>
+      <div class="cae-section">
+        <div><strong>CAE:</strong> ${factura.cae}</div>
+        <div><strong>Vto CAE:</strong> ${factura.caeFechaVto}</div>
+      </div>
+    </div></body></html>`)
+    w.document.close()
+  }
 
   if (loading) {
     return <div className="flex items-center justify-center py-20"><Loader2 size={32} className="animate-spin text-amber-500" /></div>
@@ -177,7 +275,7 @@ export default function Facturacion() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-3">
-          <p className="text-sm text-gray-500">{facturas.length} facturas emitidas esta sesión</p>
+          <p className="text-sm text-gray-500">{facturas.length} facturas emitidas</p>
           <button onClick={handleCheckArca} disabled={checking} className="flex items-center gap-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-colors">
             {checking ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             Estado ARCA
@@ -194,12 +292,10 @@ export default function Facturacion() {
       </div>
 
       {/* Alertas */}
-      {error && (
+      {error && !modalOpen && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
           <AlertCircle size={18} className="text-red-500 mt-0.5 shrink-0" />
-          <div className="flex-1">
-            <p className="text-sm text-red-700">{error}</p>
-          </div>
+          <p className="text-sm text-red-700 flex-1">{error}</p>
           <button onClick={() => setError(null)}><X size={16} className="text-red-400" /></button>
         </div>
       )}
@@ -215,7 +311,7 @@ export default function Facturacion() {
         </div>
       )}
 
-      {/* Tabla de facturas emitidas */}
+      {/* Tabla de facturas */}
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -228,21 +324,32 @@ export default function Facturacion() {
                 <th className="text-right px-4 py-3 font-medium">Total</th>
                 <th className="text-left px-4 py-3 font-medium">CAE</th>
                 <th className="text-left px-4 py-3 font-medium">Vto CAE</th>
+                <th className="text-center px-4 py-3 font-medium">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {facturas.length === 0 ? (
-                <tr><td colSpan="7" className="text-center py-8 text-gray-400">No hay facturas emitidas en esta sesión. Registrá una venta primero y luego emití la factura.</td></tr>
+                <tr><td colSpan="8" className="text-center py-8 text-gray-400">No hay facturas emitidas. Registrá una venta primero y luego emití la factura.</td></tr>
               ) : (
-                facturas.map((f, idx) => (
-                  <tr key={idx} className="hover:bg-gray-50">
+                facturas.map((f) => (
+                  <tr key={f.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-gray-600">{new Date(f.fecha).toLocaleDateString('es-AR')}</td>
                     <td className="px-4 py-3"><span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded">{tipoLabel(f.cbteTipo)}</span></td>
                     <td className="px-4 py-3 font-mono text-gray-800">{String(f.ptoVta).padStart(4, '0')}-{String(f.numero).padStart(8, '0')}</td>
                     <td className="px-4 py-3 text-gray-800">{f.clienteNombre}</td>
-                    <td className="px-4 py-3 text-right font-bold text-green-600">${f.total?.toLocaleString('es-AR')}</td>
+                    <td className="px-4 py-3 text-right font-bold text-green-600">${Number(f.impTotal).toLocaleString('es-AR')}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">{f.cae}</td>
                     <td className="px-4 py-3 text-xs text-gray-500">{f.caeFechaVto}</td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => setDetalleModal(f)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Ver detalle">
+                          <Eye size={16} />
+                        </button>
+                        <button onClick={() => handlePrint(f)} className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" title="Imprimir">
+                          <Printer size={16} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
@@ -251,10 +358,74 @@ export default function Facturacion() {
         </div>
       </div>
 
+      {/* Modal Detalle Factura */}
+      <Modal isOpen={!!detalleModal} onClose={() => setDetalleModal(null)} title="Detalle de Factura">
+        {detalleModal && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">Tipo</p>
+                <p className="font-medium">{tipoLabel(detalleModal.cbteTipo)}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">Número</p>
+                <p className="font-mono font-medium">{String(detalleModal.ptoVta).padStart(4, '0')}-{String(detalleModal.numero).padStart(8, '0')}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">Fecha</p>
+                <p className="font-medium">{new Date(detalleModal.fecha).toLocaleDateString('es-AR')}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">Concepto</p>
+                <p className="font-medium">{conceptoLabel(detalleModal.concepto)}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">Cliente</p>
+                <p className="font-medium">{detalleModal.clienteNombre}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">Cond. IVA Receptor</p>
+                <p className="font-medium">{condIVALabel(detalleModal.condicionIVA)}</p>
+              </div>
+            </div>
+
+            {/* Items */}
+            {detalleModal.items && detalleModal.items.length > 0 && (
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-gray-500 mb-2">Detalle de productos</p>
+                {detalleModal.items.map((item, i) => (
+                  <div key={i} className="flex justify-between text-sm py-1 border-b border-gray-200 last:border-0">
+                    <span className="text-gray-700">{item.nombre} x{item.cantidad}</span>
+                    <span className="font-medium">${(item.precio * item.cantidad).toLocaleString('es-AR')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Importes */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+              <div className="flex justify-between mb-1"><span className="text-amber-700">Neto Gravado</span><span className="font-mono">${Number(detalleModal.impNeto || 0).toLocaleString('es-AR')}</span></div>
+              <div className="flex justify-between mb-1"><span className="text-amber-700">IVA 21%</span><span className="font-mono">${Number(detalleModal.impIVA || 0).toLocaleString('es-AR')}</span></div>
+              <div className="flex justify-between font-bold text-lg border-t border-amber-300 pt-2 mt-2"><span className="text-amber-800">Total</span><span className="text-green-600">${Number(detalleModal.impTotal || 0).toLocaleString('es-AR')}</span></div>
+            </div>
+
+            {/* CAE */}
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
+              <div className="flex justify-between mb-1"><span className="text-green-700">CAE</span><span className="font-mono font-medium">{detalleModal.cae}</span></div>
+              <div className="flex justify-between"><span className="text-green-700">Vencimiento CAE</span><span className="font-mono">{detalleModal.caeFechaVto}</span></div>
+            </div>
+
+            {/* Botón imprimir */}
+            <button onClick={() => handlePrint(detalleModal)} className="w-full bg-amber-500 text-white py-2.5 rounded-lg font-medium hover:bg-amber-600 transition-colors flex items-center justify-center gap-2">
+              <Printer size={18} /> Imprimir Factura
+            </button>
+          </div>
+        )}
+      </Modal>
+
       {/* Modal Nueva Factura */}
       <Modal isOpen={modalOpen} onClose={() => { setModalOpen(false); resetForm(); setError(null) }} title="Emitir Factura Electrónica">
         <form onSubmit={handleEmitir} className="space-y-4">
-          {/* Venta asociada */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Venta a facturar</label>
             <select value={ventaId} onChange={e => setVentaId(e.target.value)} required className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none">
@@ -279,7 +450,6 @@ export default function Facturacion() {
             </div>
           )}
 
-          {/* Tipo de comprobante */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de factura</label>
@@ -296,7 +466,6 @@ export default function Facturacion() {
             </div>
           </div>
 
-          {/* Punto de venta + Condición IVA receptor */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Punto de venta</label>
@@ -310,7 +479,6 @@ export default function Facturacion() {
             </div>
           </div>
 
-          {/* Documento del receptor */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tipo documento</label>
@@ -329,7 +497,6 @@ export default function Facturacion() {
             )}
           </div>
 
-          {/* Fechas servicios */}
           {(concepto === 2 || concepto === 3) && (
             <div className="grid grid-cols-3 gap-3">
               <div>
@@ -347,7 +514,6 @@ export default function Facturacion() {
             </div>
           )}
 
-          {/* Resumen importes */}
           {ventaSeleccionada && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
               <p className="text-sm font-medium text-amber-800 mb-1">Resumen de importes</p>
@@ -364,8 +530,7 @@ export default function Facturacion() {
             </div>
           )}
 
-          {/* Error en modal */}
-          {error && (
+          {error && modalOpen && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
               <AlertCircle size={14} className="inline mr-1" />{error}
             </div>
