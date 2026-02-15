@@ -1,6 +1,9 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth } from './hooks/useAuth'
+import { Loader2 } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import Header from './components/Header'
+import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Inventario from './pages/Inventario'
 import Ventas from './pages/Ventas'
@@ -9,7 +12,7 @@ import Proveedores from './pages/Proveedores'
 import Reportes from './pages/Reportes'
 import Facturacion from './pages/Facturacion'
 
-export default function App() {
+function ProtectedLayout() {
   return (
     <div className="flex">
       <Sidebar />
@@ -24,9 +27,29 @@ export default function App() {
             <Route path="/clientes" element={<Clientes />} />
             <Route path="/proveedores" element={<Proveedores />} />
             <Route path="/reportes" element={<Reportes />} />
+            <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </main>
       </div>
     </div>
+  )
+}
+
+export default function App() {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-800 flex items-center justify-center">
+        <Loader2 size={40} className="animate-spin text-amber-400" />
+      </div>
+    )
+  }
+
+  return (
+    <Routes>
+      <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
+      <Route path="/*" element={user ? <ProtectedLayout /> : <Navigate to="/login" />} />
+    </Routes>
   )
 }
