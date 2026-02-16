@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { FileText, Send, CheckCircle, AlertCircle, Loader2, RefreshCw, X, Eye, Printer } from 'lucide-react'
+import { doc, getDoc } from 'firebase/firestore'
+import { db } from '../utils/firebase'
 import Modal from '../components/Modal'
 import { getClientes, getVentas, getFacturas, saveFactura } from '../utils/storage'
 import { emitirFactura, verificarEstadoArca } from '../services/arcaApi'
@@ -40,6 +42,7 @@ export default function Facturacion() {
   const [facturas, setFacturas] = useState([])
   const [resultado, setResultado] = useState(null)
   const [error, setError] = useState(null)
+  const [configArca, setConfigArca] = useState(null)
   const printRef = useRef(null)
 
   // Form state
@@ -60,8 +63,21 @@ export default function Facturacion() {
       const [v, c, f] = await Promise.all([getVentas(), getClientes(), getFacturas()])
       setVentas(v)
       setClientes(c)
-      // Ordenar facturas por fecha desc
       setFacturas(f.sort((a, b) => new Date(b.fecha) - new Date(a.fecha)))
+
+      // Cargar configuración ARCA para datos del emisor
+      try {
+        const ref = doc(db, 'configuracion', 'arca')
+        const snap = await getDoc(ref)
+        if (snap.exists()) {
+          const data = snap.data()
+          setConfigArca(data)
+          if (data.ptoVtaDefault) setPtoVta(data.ptoVtaDefault)
+        }
+      } catch (err) {
+        console.error('Error cargando config ARCA:', err)
+      }
+
       setLoading(false)
     }
     load()
@@ -189,7 +205,21 @@ export default function Facturacion() {
   const condIVALabel = (id) => CONDICIONES_IVA.find(c => c.id === id)?.label || id
   const conceptoLabel = (id) => TIPOS_CONCEPTO.find(t => t.id === id)?.label || id
 
+  // Formatea CUIT de 11 dígitos a XX-XXXXXXXX-X
+  const formatCuit = (cuit) => {
+    if (!cuit || cuit.length !== 11) return cuit || ''
+    return `${cuit.slice(0,2)}-${cuit.slice(2,10)}-${cuit.slice(10)}`
+  }
+
   const handlePrint = (factura) => {
+    // Leer datos del emisor desde la configuración ARCA (Firebase)
+    const emisor = {
+      razonSocial: configArca?.razonSocial || 'SIN CONFIGURAR',
+      domicilio: configArca?.domicilio || 'SIN CONFIGURAR',
+      condicionIva: configArca?.condicionIva || 'SIN CONFIGURAR',
+      cuit: configArca?.cuit || '00000000000',
+    }
+
     const w = window.open('', '_blank', 'width=800,height=600')
     const tipoFact = tipoLabel(factura.cbteTipo)
     const letra = tipoFact?.split(' ')[1] || ''
@@ -226,10 +256,9 @@ export default function Facturacion() {
     <div class="factura">
       <div class="header">
         <div class="header-left">
-          <div class="empresa">VALKYRIUM SOLUTIONS</div>
-          <div>Razón Social: OBREGON JERONIMO</div>
-          <div>Domicilio Comercial: Córdoba, Argentina</div>
-          <div>Condición frente al IVA: IVA Responsable Inscripto</div>
+          <div class="empresa">${emisor.razonSocial}</div>
+          <div>Domicilio Comercial: ${emisor.domicilio}</div>
+          <div>Condición frente al IVA: ${emisor.condicionIva}</div>
         </div>
         <div class="header-center">
           <div class="letra">${letra}</div>
@@ -239,7 +268,7 @@ export default function Facturacion() {
           <div style="font-size:16px;font-weight:bold">${tipoFact}</div>
           <div style="font-size:16px;font-weight:bold">Nro: ${numero}</div>
           <div>Fecha de Emisión: ${fechaEmision}</div>
-          <div>CUIT: 20-44740418-5</div>
+          <div>CUIT: ${formatCuit(emisor.cuit)}</div>
           <div>Punto de Venta: ${String(factura.ptoVta).padStart(4, '0')}</div>
         </div>
       </div>
